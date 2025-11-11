@@ -1,16 +1,30 @@
-# text_canvas_app
+# Flutter Text Canvas App
 
-A new Flutter project.
+A simple Flutter text canvas app with styling, drag-and-drop, and undo/redo.
 
-## Getting Started
+## Features
 
-This project is a starting point for a Flutter application.
+- **Add Text:** Click to add new text elements to the canvas.  
+- **Move Text:** Drag and drop text anywhere on the canvas.  
+- **Edit Text:** Tap a selected text item to edit it directly on the canvas.  
+- **Style Text:** Change font family, font size, bold, italic, and underline.  
+- **Undo/Redo:** Full undo/redo support for all actions.  
+- **Cross-Platform:** Runs on Android, iOS, and Web.
 
-A few resources to get you started if this is your first Flutter project:
+## How to Run
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+1. **Clone the repository**
+   ```bash
+   git clone <your-repo-link>
+   cd text_canvas_app
+   ```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+2. **Install dependencies**
+    ```bash
+    flutter pub get
+    ```
+
+3. **Run the app**
+    ```bash
+    flutter run
+    ```
