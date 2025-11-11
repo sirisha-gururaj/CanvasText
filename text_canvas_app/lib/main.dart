@@ -105,6 +105,9 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
     _textFocusNode = FocusNode(); // Initialize focus node
   }
 
+  // Key to measure the canvas area and translate global taps to local coords
+  final GlobalKey _canvasKey = GlobalKey();
+
   @override
   void dispose() {
     _editingController?.dispose(); // Dispose controller if it exists
@@ -351,14 +354,72 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
               // --- The Canvas ---
               Expanded(
                 child: GestureDetector(
-                  onTap: () {
-                    // If we're currently editing an element, ignore taps on the
-                    // canvas background so the TextField can handle them on
-                    // Android (prevents the background from immediately
-                    // cancelling edit mode). Otherwise, unselect and stop
-                    // editing as before.
-                    if (_editingElementId != null) return;
-                    // Unselect and stop editing when tapping the canvas background
+                  // Use onTapUp so we can inspect the tap position and only
+                  // cancel editing if the tap is outside the editing element's
+                  // bounds. This allows taps inside the TextField to be handled
+                  // by the TextField (so caret placement and IME work), while
+                  // still permitting the user to tap the canvas to finish
+                  // editing and then drag the element.
+                  onTapUp: (details) {
+                    // If nothing is being edited just clear selection as before
+                    if (_editingElementId == null) {
+                      _stopEditing(); // Commit any changes
+                      setState(() {
+                        _selectedElementId = null;
+                      });
+                      _saveState();
+                      return;
+                    }
+
+                    // We are editing: determine if the tap was inside the
+                    // currently editing element. If it was, let the TextField
+                    // handle it. If not, stop editing.
+                    final canvasBox =
+                        _canvasKey.currentContext?.findRenderObject()
+                            as RenderBox?;
+                    if (canvasBox == null) return;
+                    final localPoint = canvasBox.globalToLocal(
+                      details.globalPosition,
+                    );
+
+                    TextElement? editingElement;
+                    try {
+                      editingElement = _elements.firstWhere(
+                        (e) => e.id == _editingElementId,
+                      );
+                    } catch (e) {
+                      return;
+                    }
+
+                    // Measure the displayed text size using TextPainter so we
+                    // can compute a hit rect for the element.
+                    final text = editingElement.text.isEmpty
+                        ? 'Tap to Edit'
+                        : editingElement.text;
+                    final tp = TextPainter(
+                      text: TextSpan(
+                        text: text,
+                        style: editingElement.style.copyWith(
+                          fontSize: editingElement.fontSize,
+                        ),
+                      ),
+                      textDirection: TextDirection.ltr,
+                    )..layout();
+                    const padding = 16.0; // small hit padding around text
+                    final rect = Rect.fromLTWH(
+                      editingElement.position.dx - padding,
+                      editingElement.position.dy - padding,
+                      tp.width + padding * 2,
+                      tp.height + padding * 2,
+                    );
+
+                    if (rect.contains(localPoint)) {
+                      // Tap was inside the editing element — do nothing and
+                      // allow the TextField to handle it.
+                      return;
+                    }
+
+                    // Tap was outside — finish editing and clear selection.
                     _stopEditing(); // Commit any changes
                     setState(() {
                       _selectedElementId = null;
@@ -366,6 +427,7 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
                     _saveState();
                   },
                   child: Container(
+                    key: _canvasKey,
                     width: double.infinity,
                     height: double.infinity,
                     color: Colors.grey[200], // Canvas background
