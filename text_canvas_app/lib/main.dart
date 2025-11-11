@@ -1,3 +1,4 @@
+// CORRECT
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -101,7 +102,6 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
     super.initState();
     // Save the initial empty state
     _saveState();
-    // *** THIS IS THE FIX ***
     _textFocusNode = FocusNode(); // Initialize focus node
   }
 
@@ -196,7 +196,7 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
       _editingController = TextEditingController(text: element.text);
     });
 
-    // Request focus *after* the widget has been built
+    // Re-add explicit focus request for Android — forces keyboard to appear
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _textFocusNode.requestFocus();
     });
@@ -352,6 +352,12 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
               Expanded(
                 child: GestureDetector(
                   onTap: () {
+                    // If we're currently editing an element, ignore taps on the
+                    // canvas background so the TextField can handle them on
+                    // Android (prevents the background from immediately
+                    // cancelling edit mode). Otherwise, unselect and stop
+                    // editing as before.
+                    if (_editingElementId != null) return;
                     // Unselect and stop editing when tapping the canvas background
                     _stopEditing(); // Commit any changes
                     setState(() {
@@ -376,7 +382,11 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
                 ),
               ),
               // --- The Toolbar ---
-              _buildToolbar(),
+              // --- UI FIX: Wrap toolbar in a SafeArea to avoid system navigation ---
+              SafeArea(
+                top: false, // We only care about the bottom edge
+                child: _buildToolbar(),
+              ),
             ],
           ),
 
@@ -407,7 +417,7 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
     final bool isSelected = element.id == _selectedElementId;
     final bool isEditing = element.id == _editingElementId;
 
-    // --- FIX 1: Set cursor based on state ---
+    // Set cursor based on state
     final MouseCursor cursor;
     if (isEditing || isSelected) {
       cursor = SystemMouseCursors.text; // Text I-beam cursor
@@ -415,13 +425,11 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
       cursor = SystemMouseCursors.grab; // "Hand" cursor when not selected
     }
 
-    Widget child; // Define the child widget
+    Widget child;
     if (isEditing) {
-      // --- EDITING WIDGET (TextField) ---
-      // --- FIX 2: Wrap in IntrinsicWidth to make the box compact ---
+      // EDITING WIDGET (TextField)
       child = IntrinsicWidth(
         child: Container(
-          // REMOVED: constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
           padding: const EdgeInsets.all(8.0),
           decoration: BoxDecoration(
             // Show a border *while* editing
@@ -434,14 +442,33 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
           child: TextField(
             controller: _editingController,
             focusNode: _textFocusNode,
+            // Request autofocus so the IME reliably opens on Android.
+            // We still call requestFocus in _startEditing; this is an
+            // additional, low-risk aid for platform focus quirks.
+            autofocus: true,
+            keyboardType: TextInputType.multiline,
+            textInputAction: TextInputAction.newline,
+            enableInteractiveSelection: true,
+            showCursor: true,
+            // Keep UI responsive during typing so the typed characters
+            // appear immediately while editing. We do not commit until
+            // _stopEditing is called, so undo/redo logic remains unchanged.
+            onChanged: (value) {
+              setState(() {});
+            },
+            // Use a collapsed input decoration (no visible border) instead of null
+            decoration: const InputDecoration(
+              isCollapsed: true,
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.zero,
+            ),
             style: GoogleFonts.getFont(
               element.fontFamily,
               textStyle: element.style.copyWith(fontSize: element.fontSize),
             ),
-            decoration:
-                null, // No border on the text field itself, just the container
             onSubmitted: (value) {
-              _stopEditing(); // Stop editing when user presses Enter
+              // onSubmitted fires with an IME action; keep behavior (commit on enter)
+              _stopEditing();
             },
             minLines: 1,
             maxLines: null, // Allow multiline
@@ -449,45 +476,14 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
         ),
       );
     } else {
-      // --- DISPLAY WIDGET (Text) ---
-      child = Container(
-        padding: const EdgeInsets.all(8.0),
-        decoration: BoxDecoration(
-          border: isSelected
-              ? Border.all(
-                  color: Colors.blue,
-                  width: 2,
-                  style: BorderStyle.solid,
-                )
-              : null,
-        ),
-        child: Text(
-          element.text.isEmpty
-              ? 'Tap to Edit'
-              : element.text, // Show placeholder if empty
-          style: GoogleFonts.getFont(
-            element.fontFamily,
-            textStyle: element.style.copyWith(fontSize: element.fontSize),
-          ),
-        ),
-      );
-    }
-
-    // --- FIX 1 (Continued): Apply the dynamic cursor ---
-    return MouseRegion(
-      cursor: cursor, // Use the cursor we defined above
-      child: GestureDetector(
+      // DISPLAY WIDGET (Text)
+      child = GestureDetector(
         onTap: () {
-          if (isEditing) {
-            // Already editing, do nothing on tap
-            return;
-          }
           if (isSelected) {
             // If already selected, tap means "start editing"
             _startEditing(element);
           } else {
             // If not selected, tap means "select"
-            // Stop editing any *other* item
             _stopEditing();
             setState(() {
               _selectedElementId = element.id;
@@ -495,20 +491,64 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
             _saveState(); // Save selection change
           }
         },
+        child: Container(
+          padding: const EdgeInsets.all(8.0),
+          decoration: BoxDecoration(
+            border: isSelected
+                ? Border.all(
+                    color: Colors.blue,
+                    width: 2,
+                    style: BorderStyle.solid,
+                  )
+                : null,
+          ),
+          child: Text(
+            element.text.isEmpty ? 'Tap to Edit' : element.text,
+            style: GoogleFonts.getFont(
+              element.fontFamily,
+              textStyle: element.style.copyWith(fontSize: element.fontSize),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (isEditing) {
+      // while editing, absorb taps so background doesn't immediately stop editing
+      return MouseRegion(
+        cursor: cursor,
+        child: GestureDetector(
+          // Let the child (TextField) handle touch events first so the
+          // TextField can receive taps/cursor placement and open the
+          // keyboard on Android. Using deferToChild avoids swallowing
+          // gestures that the TextField needs while still preventing
+          // the background canvas from receiving taps when the child is hit.
+          behavior: HitTestBehavior.deferToChild,
+          onTap: () {
+            // Ensure taps on the editing area give focus to the TextField on
+            // Android. This explicitly requests focus so the IME opens and
+            // the cursor appears where the user tapped.
+            FocusScope.of(context).requestFocus(_textFocusNode);
+          },
+          child: child,
+        ),
+      );
+    }
+
+    // Normal draggable (not editing)
+    return MouseRegion(
+      cursor: cursor,
+      child: GestureDetector(
         onPanUpdate: (details) {
           if (isEditing) return; // Don't drag while editing
           setState(() {
             element.position += details.delta;
           });
-          // Note: We don't save state on *every* pan update,
-          // as it would flood the history. See onPanEnd.
         },
         onPanEnd: (details) {
-          if (isEditing) return; // Don't drag while editing
-          // Save state only when dragging finishes
           _saveState();
         },
-        child: child, // Use the 'child' we built (either Text or TextField)
+        child: child,
       ),
     );
   }
@@ -540,45 +580,72 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           // --- Font Family Dropdown ---
-          DropdownButton<String>(
-            value: selectedFontFamily,
-            hint: const Text('Font'),
-            onChanged: isElementSelected ? _changeFontFamily : null,
-            items: _fontFamilies.map((String family) {
-              return DropdownMenuItem<String>(
-                value: family,
-                child: Text(family, style: GoogleFonts.getFont(family)),
-              );
-            }).toList(),
+          Flexible(
+            child: DropdownButton<String>(
+              value: selectedFontFamily,
+              hint: const Text('Font'),
+              isExpanded:
+                  true, // --- NEW UI FIX: Tell dropdown to use flexible space
+              onChanged: isElementSelected ? _changeFontFamily : null,
+              items: _fontFamilies.map((String family) {
+                return DropdownMenuItem<String>(
+                  value: family,
+                  child: Text(
+                    family,
+                    style: GoogleFonts.getFont(family),
+                    // Add overflow handling for long font names
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                );
+              }).toList(),
+            ),
           ),
 
-          // --- Font Size Controls ---
-          IconButton(
-            icon: const Icon(Icons.remove),
-            onPressed: isElementSelected ? () => _changeFontSize(-2) : null,
+          // --- OVERFLOW FIX: Group Font Size Controls ---
+          // --- NEW UI FIX: Wrap in FittedBox to shrink ---
+          FittedBox(
+            child: Row(
+              mainAxisSize:
+                  MainAxisSize.min, // Prevents this Row from expanding
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.remove),
+                  onPressed: isElementSelected
+                      ? () => _changeFontSize(-2)
+                      : null,
+                ),
+                Text(selectedFontSize.toStringAsFixed(0)),
+                IconButton(
+                  icon: const Icon(Icons.add),
+                  onPressed: isElementSelected
+                      ? () => _changeFontSize(2)
+                      : null,
+                ),
+              ],
+            ),
           ),
-          Text(selectedFontSize.toStringAsFixed(0)),
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: isElementSelected ? () => _changeFontSize(2) : null,
-          ),
+          // --- END OF FIX ---
 
           // --- Font Style Toggles ---
-          ToggleButtons(
-            isSelected: [isBold, isItalic, isUnderline],
-            onPressed: isElementSelected
-                ? (index) {
-                    if (index == 0) _toggleBold();
-                    if (index == 1) _toggleItalic();
-                    if (index == 2) _toggleUnderline();
-                  }
-                : null,
-            children: const [
-              Icon(Icons.format_bold),
-              Icon(Icons.format_italic),
-              Icon(Icons.format_underline),
-            ],
+          // --- NEW UI FIX: Wrap in FittedBox to shrink ---
+          FittedBox(
+            child: ToggleButtons(
+              isSelected: [isBold, isItalic, isUnderline],
+              onPressed: isElementSelected
+                  ? (index) {
+                      if (index == 0) _toggleBold();
+                      if (index == 1) _toggleItalic();
+                      if (index == 2) _toggleUnderline();
+                    }
+                  : null,
+              children: const [
+                Icon(Icons.format_bold),
+                Icon(Icons.format_italic),
+                Icon(Icons.format_underline),
+              ],
+            ),
           ),
+          // --- END OF FIX ---
         ],
       ),
     );
