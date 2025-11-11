@@ -1,23 +1,20 @@
-// CORRECT
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-// A class to hold all properties of a text element
 class TextElement {
   String text;
   Offset position;
   TextStyle style;
   String fontFamily;
   double fontSize;
-  int id; // Unique ID for finding this element
+  int id;
 
-  // A copy of the element for history
   TextElement copy() {
     return TextElement(
       id: id,
       text: text,
       position: position,
-      style: style.copyWith(), // Must copy the style
+      style: style.copyWith(),
       fontFamily: fontFamily,
       fontSize: fontSize,
     );
@@ -33,14 +30,12 @@ class TextElement {
   });
 }
 
-// A class to manage the history for undo/redo
 class HistoryState {
   final List<TextElement> elements;
   final int? selectedElementId;
 
   HistoryState({required this.elements, this.selectedElementId});
 
-  // Create a deep copy of the elements list
   static List<TextElement> deepCopy(List<TextElement> list) {
     return list.map((e) => e.copy()).toList();
   }
@@ -72,65 +67,107 @@ class TextCanvasPage extends StatefulWidget {
 }
 
 class _TextCanvasPageState extends State<TextCanvasPage> {
-  // List of all text elements on the canvas
   List<TextElement> _elements = [];
   int? _selectedElementId;
-  int _nextElementId = 0; // Counter for unique IDs
+  int _nextElementId = 0;
 
-  // For Undo/Redo
   final List<HistoryState> _history = [];
   List<HistoryState> _redoStack = [];
 
-  // --- NEW: State for inline editing ---
   int? _editingElementId;
   TextEditingController? _editingController;
-  late FocusNode _textFocusNode; // Declared as late
-  // ---
+  late FocusNode _textFocusNode;
+  bool _suppressOnChange = false;
 
-  // Available fonts to choose from
   final List<String> _fontFamilies = [
     'Roboto',
     'Lato',
     'Montserrat',
     'Oswald',
     'Playfair Display',
-    'Source Sans 3', // Corrected font name
+    'Source Sans 3',
   ];
 
   @override
   void initState() {
     super.initState();
-    // Save the initial empty state
+
     _saveState();
-    _textFocusNode = FocusNode(); // Initialize focus node
+    _textFocusNode = FocusNode();
   }
 
-  // Key to measure the canvas area and translate global taps to local coords
   final GlobalKey _canvasKey = GlobalKey();
 
   @override
   void dispose() {
-    _editingController?.dispose(); // Dispose controller if it exists
-    _textFocusNode.dispose(); // Dispose focus node
+    _editingController?.dispose();
+    _textFocusNode.dispose();
     super.dispose();
   }
 
-  // --- History & State Management ---
-
   void _saveState() {
-    // Create a deep copy of the current state
     final currentState = HistoryState(
       elements: HistoryState.deepCopy(_elements),
       selectedElementId: _selectedElementId,
     );
-    _history.add(currentState);
-    // When we make a new change, the redo stack must be cleared
-    _redoStack = [];
+    if (_editingElementId != null) {
+      _history.add(currentState);
+      _redoStack = [];
+    } else {
+      if (_history.isNotEmpty) {
+        if (_areStatesEqual(_history.last, currentState)) {
+          setState(() {});
+          return;
+        }
+      }
+      _history.add(currentState);
+      // When we make a new change, the redo stack must be cleared
+      _redoStack = [];
+    }
     // Limit history size to prevent memory issues (optional)
     if (_history.length > 50) {
       _history.removeAt(0);
     }
     setState(() {}); // Update UI to reflect undo/redo button state
+  }
+
+  // Compare two HistoryState objects for meaningful equality
+  bool _areStatesEqual(HistoryState a, HistoryState b) {
+    if (a.selectedElementId != b.selectedElementId) return false;
+    if (a.elements.length != b.elements.length) return false;
+    for (int i = 0; i < a.elements.length; i++) {
+      final e1 = a.elements[i];
+      final e2 = b.elements[i];
+      if (e1.id != e2.id) return false;
+      if (e1.text != e2.text) return false;
+      if (e1.position.dx != e2.position.dx ||
+          e1.position.dy != e2.position.dy) {
+        return false;
+      }
+      if (e1.fontFamily != e2.fontFamily) return false;
+      if (e1.fontSize != e2.fontSize) return false;
+      // Compare a few style attributes
+      if (e1.style.fontWeight != e2.style.fontWeight) return false;
+      if (e1.style.fontStyle != e2.style.fontStyle) return false;
+      if (e1.style.decoration != e2.style.decoration) return false;
+    }
+    return true;
+  }
+
+  // Forcefully save a state ignoring duplicate checks. Use this for
+  // explicit user actions that should always be recorded (like style
+  // toggles) so undo/redo steps through each user intent.
+  void _forceSaveState() {
+    final currentState = HistoryState(
+      elements: HistoryState.deepCopy(_elements),
+      selectedElementId: _selectedElementId,
+    );
+    _history.add(currentState);
+    _redoStack = [];
+    if (_history.length > 50) {
+      _history.removeAt(0);
+    }
+    setState(() {});
   }
 
   void _undo() {
@@ -158,6 +195,25 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
     setState(() {
       _elements = HistoryState.deepCopy(state.elements);
       _selectedElementId = state.selectedElementId;
+      // If we are currently editing an element, keep the TextField in sync
+      // with the restored model so undo/redo updates the visible text
+      // while editing instead of leaving the old controller text.
+      if (_editingElementId != null && _editingController != null) {
+        try {
+          final el = _elements.firstWhere((e) => e.id == _editingElementId);
+          // Prevent the controller's onChanged from firing a save while we
+          // are applying the restored state.
+          _suppressOnChange = true;
+          _editingController!.text = el.text;
+          _editingController!.selection = TextSelection.collapsed(
+            offset: _editingController!.text.length,
+          );
+          _suppressOnChange = false;
+        } catch (e) {
+          // Element no longer exists; ignore
+          _suppressOnChange = false;
+        }
+      }
     });
   }
 
@@ -230,10 +286,9 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
         _selectedElement!.fontFamily = newFamily;
         _updateSelectedElementStyle(); // Apply the font
       });
-      // --- LOGIC FIX: Only save state if NOT editing ---
-      if (_editingElementId == null) {
-        _saveState();
-      }
+      // Record this change as a distinct user action so undo/redo
+      // steps through font changes even while editing.
+      _forceSaveState();
     }
   }
 
@@ -246,10 +301,9 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
         );
         _updateSelectedElementStyle(); // Apply the size
       });
-      // --- LOGIC FIX: Only save state if NOT editing ---
-      if (_editingElementId == null) {
-        _saveState();
-      }
+      // Record size change as a distinct action so undo/redo steps this
+      // change even while editing.
+      _forceSaveState();
     }
   }
 
@@ -263,10 +317,9 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
               : FontWeight.bold,
         );
       });
-      // --- LOGIC FIX: Only save state if NOT editing ---
-      if (_editingElementId == null) {
-        _saveState();
-      }
+      // Always record toggles as distinct actions so undo reverts them
+      // one-by-one, including while editing.
+      _forceSaveState();
     }
   }
 
@@ -280,10 +333,8 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
               : FontStyle.italic,
         );
       });
-      // --- LOGIC FIX: Only save state if NOT editing ---
-      if (_editingElementId == null) {
-        _saveState();
-      }
+      // Always record toggles so undo/redo steps these while editing.
+      _forceSaveState();
     }
   }
 
@@ -297,10 +348,8 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
               : TextDecoration.underline,
         );
       });
-      // --- LOGIC FIX: Only save state if NOT editing ---
-      if (_editingElementId == null) {
-        _saveState();
-      }
+      // Always record toggles so undo/redo steps these while editing.
+      _forceSaveState();
     }
   }
 
@@ -430,7 +479,7 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
                     key: _canvasKey,
                     width: double.infinity,
                     height: double.infinity,
-                    color: Colors.grey[200], // Canvas background
+                    color: Colors.grey[200],
                     child: Stack(
                       children: _elements.map((element) {
                         return Positioned(
@@ -443,21 +492,14 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
                   ),
                 ),
               ),
-              // --- The Toolbar ---
-              // --- UI FIX: Wrap toolbar in a SafeArea to avoid system navigation ---
-              SafeArea(
-                top: false, // We only care about the bottom edge
-                child: _buildToolbar(),
-              ),
+              SafeArea(top: false, child: _buildToolbar()),
             ],
           ),
 
-          // --- UI CHANGE: Added Positioned Button ---
           Positioned(
             left: 0,
             right: 0,
-            bottom:
-                72.0, // Lifts button 72px from bottom (64px toolbar + 8px space)
+            bottom: 72.0,
             child: Center(
               child: FloatingActionButton.extended(
                 onPressed: _addText,
@@ -472,29 +514,23 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
     );
   }
 
-  // --- Widget Builders ---
-
-  // Builds the draggable text widget
   Widget _buildDraggableText(TextElement element) {
     final bool isSelected = element.id == _selectedElementId;
     final bool isEditing = element.id == _editingElementId;
 
-    // Set cursor based on state
     final MouseCursor cursor;
     if (isEditing || isSelected) {
-      cursor = SystemMouseCursors.text; // Text I-beam cursor
+      cursor = SystemMouseCursors.text;
     } else {
-      cursor = SystemMouseCursors.grab; // "Hand" cursor when not selected
+      cursor = SystemMouseCursors.grab;
     }
 
     Widget child;
     if (isEditing) {
-      // EDITING WIDGET (TextField)
       child = IntrinsicWidth(
         child: Container(
           padding: const EdgeInsets.all(8.0),
           decoration: BoxDecoration(
-            // Show a border *while* editing
             border: Border.all(
               color: Colors.blue,
               width: 2,
@@ -504,21 +540,25 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
           child: TextField(
             controller: _editingController,
             focusNode: _textFocusNode,
-            // Request autofocus so the IME reliably opens on Android.
-            // We still call requestFocus in _startEditing; this is an
-            // additional, low-risk aid for platform focus quirks.
             autofocus: true,
             keyboardType: TextInputType.multiline,
             textInputAction: TextInputAction.newline,
             enableInteractiveSelection: true,
             showCursor: true,
-            // Keep UI responsive during typing so the typed characters
-            // appear immediately while editing. We do not commit until
-            // _stopEditing is called, so undo/redo logic remains unchanged.
             onChanged: (value) {
-              setState(() {});
+              if (_suppressOnChange) return;
+
+              if (_editingElementId != null) {
+                try {
+                  final element = _elements.firstWhere(
+                    (e) => e.id == _editingElementId,
+                  );
+                  element.text = value;
+                } catch (e) {}
+              }
+              _saveState();
             },
-            // Use a collapsed input decoration (no visible border) instead of null
+
             decoration: const InputDecoration(
               isCollapsed: true,
               border: InputBorder.none,
@@ -529,7 +569,6 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
               textStyle: element.style.copyWith(fontSize: element.fontSize),
             ),
             onSubmitted: (value) {
-              // onSubmitted fires with an IME action; keep behavior (commit on enter)
               _stopEditing();
             },
             minLines: 1,
