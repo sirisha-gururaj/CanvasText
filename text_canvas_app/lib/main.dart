@@ -227,7 +227,10 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
         _selectedElement!.fontFamily = newFamily;
         _updateSelectedElementStyle(); // Apply the font
       });
-      _saveState();
+      // --- LOGIC FIX: Only save state if NOT editing ---
+      if (_editingElementId == null) {
+        _saveState();
+      }
     }
   }
 
@@ -240,7 +243,10 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
         );
         _updateSelectedElementStyle(); // Apply the size
       });
-      _saveState();
+      // --- LOGIC FIX: Only save state if NOT editing ---
+      if (_editingElementId == null) {
+        _saveState();
+      }
     }
   }
 
@@ -254,7 +260,10 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
               : FontWeight.bold,
         );
       });
-      _saveState();
+      // --- LOGIC FIX: Only save state if NOT editing ---
+      if (_editingElementId == null) {
+        _saveState();
+      }
     }
   }
 
@@ -268,7 +277,10 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
               : FontStyle.italic,
         );
       });
-      _saveState();
+      // --- LOGIC FIX: Only save state if NOT editing ---
+      if (_editingElementId == null) {
+        _saveState();
+      }
     }
   }
 
@@ -282,7 +294,10 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
               : TextDecoration.underline,
         );
       });
-      _saveState();
+      // --- LOGIC FIX: Only save state if NOT editing ---
+      if (_editingElementId == null) {
+        _saveState();
+      }
     }
   }
 
@@ -326,45 +341,61 @@ class _TextCanvasPageState extends State<TextCanvasPage> {
         foregroundColor: Colors.black,
         elevation: 1,
       ),
-      body: Column(
+      // --- UI CHANGE: REMOVED floatingActionButton ---
+      // floatingActionButton: FloatingActionButton.extended(...)
+      body: Stack(
+        // --- UI CHANGE: Added Stack ---
         children: [
-          // --- The Canvas ---
-          Expanded(
-            child: GestureDetector(
-              onTap: () {
-                // Unselect and stop editing when tapping the canvas background
-                _stopEditing(); // Commit any changes
-                setState(() {
-                  _selectedElementId = null;
-                });
-                _saveState();
-              },
-              child: Container(
-                width: double.infinity,
-                height: double.infinity,
-                color: Colors.grey[200], // Canvas background
-                child: Stack(
-                  children: _elements.map((element) {
-                    return Positioned(
-                      left: element.position.dx,
-                      top: element.position.dy,
-                      child: _buildDraggableText(element),
-                    );
-                  }).toList(),
+          Column(
+            children: [
+              // --- The Canvas ---
+              Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    // Unselect and stop editing when tapping the canvas background
+                    _stopEditing(); // Commit any changes
+                    setState(() {
+                      _selectedElementId = null;
+                    });
+                    _saveState();
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    height: double.infinity,
+                    color: Colors.grey[200], // Canvas background
+                    child: Stack(
+                      children: _elements.map((element) {
+                        return Positioned(
+                          left: element.position.dx,
+                          top: element.position.dy,
+                          child: _buildDraggableText(element),
+                        );
+                      }).toList(),
+                    ),
+                  ),
                 ),
+              ),
+              // --- The Toolbar ---
+              _buildToolbar(),
+            ],
+          ),
+
+          // --- UI CHANGE: Added Positioned Button ---
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom:
+                72.0, // Lifts button 72px from bottom (64px toolbar + 8px space)
+            child: Center(
+              child: FloatingActionButton.extended(
+                onPressed: _addText,
+                tooltip: 'Add Text',
+                icon: const Icon(Icons.add),
+                label: const Text('Add Text'),
               ),
             ),
           ),
-          // --- The Toolbar ---
-          _buildToolbar(),
         ],
-      ),
-      // --- Add Text Button ---
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addText,
-        tooltip: 'Add Text',
-        icon: const Icon(Icons.add),
-        label: const Text('Add Text'),
       ),
     );
   }
