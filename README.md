@@ -28,3 +28,7 @@ A simple Flutter text canvas app with styling, drag-and-drop, and undo/redo.
     ```bash
     flutter run
     ```
+
+## Download the app
+
+An APK file is included so you can try the app directly on your Android device. If it doesn't work, you can build a new APK using the steps above.
